@@ -1,0 +1,61 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND = -g -Wall
+
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildflags.mk
+
+DESTDIR=$(CURDIR)/debian/tmp
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_configure:
+	CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
+		./configure --prefix=/usr --disable-rpath-install \
+		--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		-v
+
+get-packaged-orig-source:
+	./debian/build-orig.sh
+
+override_dh_auto_build:
+	$(MAKE) all V=2
+
+override_dh_auto_test:
+ifeq (,$(findstring nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) check
+endif
+
+override_dh_auto_clean:
+	[ ! -f Makefile ] || $(MAKE) distclean
+	rm -rf bin
+	# Waf should be doing this; see
+	# https://bugzilla.samba.org/show_bug.cgi?id=8854
+	rm -f .lock-wscript
+	# Waf should be doing this; see
+	# https://bugzilla.samba.org/show_bug.cgi?id=8855
+	rm -rf buildtools/wafsamba/__pycache__ \
+	       third_party/waf/waflib/__pycache__/ \
+	       third_party/waf/waflib/extras/__pycache__/ \
+	       third_party/waf/waflib/Tools/__pycache__/
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(DESTDIR)
+	# Waf should be doing this..
+	ar cr libtdb.a bin/default/common/*.o
+	mv libtdb.a $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)
+	mv $(DESTDIR)/usr/bin/tdbbackup \
+		$(DESTDIR)/usr/bin/tdbbackup.tdbtools
+	mv $(DESTDIR)//usr/share/man/man8/tdbbackup.8 \
+		$(DESTDIR)/usr/share/man/man8/tdbbackup.tdbtools.8
+	#HACK alert: fix up wrong markers in the common include file
+	sed -i 's/^_PUBLIC_ //' ${DESTDIR}/usr/include/tdb.h
+	touch --reference=include/tdb.h ${DESTDIR}/usr/include/tdb.h
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_makeshlibs:
+	dh_makeshlibs -Npython3-tdb -- -c4

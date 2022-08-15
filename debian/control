@@ -1,0 +1,70 @@
+Source: tdb
+Section: devel
+Priority: optional
+Maintainer: Deepin Developer <deepin-dev@deepin.org>
+Uploaders: Deepin Packages Builder <packages@deepin.org>
+           Mathieu Parent <sathieu@debian.org>,
+           Michael Tokarev <mjt@tls.msk.ru>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               docbook-xml,
+               docbook-xsl,
+               python3-dev,
+               xsltproc
+Rules-Requires-Root: no
+Homepage: https://tdb.samba.org/
+Standards-Version: 4.6.0
+#Vcs-Browser
+#Vcs-Git
+
+Package: libtdb1
+Pre-Depends: ${misc:Pre-Depends}
+Multi-Arch: same
+Architecture: any
+Section: libs
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Trivial Database - shared library
+ This is a simple database API. It is modelled after the structure
+ of GDBM. TDB features, unlike GDBM, multiple writers support with
+ appropriate locking and transactions.
+ .
+ This package contains the shared library file.
+
+Package: tdb-tools
+Section: utils
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Trivial Database - bundled binaries
+ This is a simple database API. It is modelled after the structure
+ of GDBM. TDB features, unlike GDBM, multiple writers support with
+ appropriate locking and transactions.
+ .
+ This package contains bundled test and utility binaries
+
+Package: libtdb-dev
+Multi-Arch: same
+Provides: tdb-dev
+Section: libdevel
+Architecture: any
+Depends: libc6-dev, libtdb1 (= ${binary:Version}), ${misc:Depends}
+Description: Trivial Database - development files
+ This is a simple database API. It is modelled after the structure
+ of GDBM. TDB features, unlike GDBM, multiple writers support with
+ appropriate locking and transactions.
+ .
+ This package contains the development files.
+
+Package: python3-tdb
+Section: python
+Architecture: any
+Depends: libtdb1 (= ${binary:Version}),
+         ${misc:Depends},
+         ${python3:Depends},
+         ${shlibs:Depends}
+Provides: ${python3:Provides}
+Description: Python3 bindings for TDB
+ This is a simple database API. It is modelled after the structure
+ of GDBM. TDB features, unlike GDBM, multiple writers support with
+ appropriate locking and transactions.
+ .
+ This package contains the Python3 bindings.
