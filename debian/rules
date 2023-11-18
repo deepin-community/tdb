@@ -1,61 +1,93 @@
 #!/usr/bin/make -f
+SHELL = /bin/sh -e
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export DEB_CFLAGS_MAINT_APPEND = -g -Wall
+export DPKG_GENSYMBOLS_CHECK_LEVEL = 4
 
-include /usr/share/dpkg/architecture.mk
+# Fast version of dpkg/architecture.mk defining all vars in one go
+ifeq (${DEB_HOST_MULTIARCH},)
+   $(foreach d, $(shell dpkg-architecture | sed 's/=/?=/'), $(eval export $d))
+endif
+include /usr/share/dpkg/buildtools.mk
 include /usr/share/dpkg/buildflags.mk
+V := $(if $(filter terse, ${DEB_BUILD_OPTIONS}),,1)
+WAF := PYTHONHASHSEED=1 ./buildtools/bin/waf \
+	$(patsubst parallel=%,-j%,$(filter parallel=%,${DEB_BUILD_OPTIONS}))
 
-DESTDIR=$(CURDIR)/debian/tmp
+ifeq (linux,${DEB_HOST_ARCH_OS})
+ifneq (${DEB_HOST_GNU_TYPE},${DEB_BUILD_GNU_TYPE})
+# for cross-build or build with foreign python binary (it is _gnu0_i386-gnu on hurd)
+export _PYTHON_SYSCONFIGDATA_NAME=_sysconfigdata__${DEB_HOST_ARCH_OS}_${DEB_HOST_MULTIARCH}
+endif
+endif
 
-%:
-	dh $@ --with python3
+# All supported installed python versions we build for
+export PY3VERSIONS := $(or ${PY3VERSIONS}, $(shell py3versions -i))
 
-override_dh_auto_configure:
-	CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
-		./configure --prefix=/usr --disable-rpath-install \
-		--libdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
-		-v
+DESTDIR := ${CURDIR}/debian/tmp
+
+build-arch build-indep build \
+install-arch install-indep install \
+binary-arch binary-indep binary \
+: %:
+	dh $@
+
+# Build in bld/pyNN/ subdirs (named after python version),
+# Since wafsamba can't build things in a named subdir,
+# we have to copy (link) whole source dir into each build subdir.
+
+.NOTPARALLEL: # don't run commands at this level in parallel
+
+py-targets = $(patsubst %, bld/%/$(strip $1), ${PY3VERSIONS})
+
+override_dh_auto_configure: $(call py-targets, stamp-config)
+$(call py-targets, stamp-config): %/stamp-config:
+	@echo "=== running configure in $* ==="
+	mkdir -p $*
+	cp -al $$(ls -1 | egrep -v '^(bld|debian)$$') $*
+	cd $*; \
+	    CC="${CC}" CPP="${CPP}" LD="${LD}" PKGCONFIG="${PKG_CONFIG}" \
+	    CPPFLAGS="${CPPFLAGS}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" \
+	    PYTHON=$(notdir $*) PYTHON_CONFIG=${DEB_HOST_MULTIARCH}-$(notdir $*)-config \
+	    ${WAF} -j1 -C configure \
+		--prefix=/usr \
+		--libdir=/usr/lib/${DEB_HOST_MULTIARCH} \
+		--disable-rpath --disable-rpath-install \
+		--bundled-libraries=NONE \
+
+	touch $@
+
+override_dh_auto_build: $(call py-targets, stamp-build)
+$(call py-targets, stamp-build): %/stamp-build: %/stamp-config
+	@echo "=== running build in $* ==="
+	cd $*; ${WAF} $(if $V,-v) build
+	# Waf should be doing this..
+	ar cr $*/bin/libtdb.a $*/bin/default/common/*.o
+
+# the testsuite does not test python bindings so there's no reason to test all pyversions
+override_dh_auto_test: \
+  $(if $(filter nocheck,${DEB_BUILD_OPTIONS}), , $(firstword $(call py-targets, test)))
+$(call py-targets, test): %/test: %/stamp-build
+	@echo "=== running test in $* ==="
+	cd $*; ${WAF} test
+
+$(call py-targets, install): %/install: %/stamp-build
+	@echo "=== running install in $* ==="
+	cd $*; ${WAF} install --destdir=${DESTDIR}
+	cp $*/bin/libtdb.a ${DESTDIR}/usr/lib/${DEB_HOST_MULTIARCH}/
+override_dh_auto_install: $(call py-targets, install)
+	mv ${DESTDIR}/usr/bin/tdbbackup \
+		${DESTDIR}/usr/bin/tdbbackup.tdbtools
+	mv ${DESTDIR}/usr/share/man/man8/tdbbackup.8 \
+		${DESTDIR}/usr/share/man/man8/tdbbackup.tdbtools.8
+	#HACK alert: fix up wrong markers in the common include file
+	sed -i 's/^_PUBLIC_ //' ${DESTDIR}/usr/include/tdb.h
+	# ..and remove the #define itself
+	patch --batch ${DESTDIR}/usr/include/tdb.h debian/header-remove-_PUBLIC_-define.patch
+
+clean:
+	dh_clean bld/
 
 get-packaged-orig-source:
 	./debian/build-orig.sh
-
-override_dh_auto_build:
-	$(MAKE) all V=2
-
-override_dh_auto_test:
-ifeq (,$(findstring nocheck,$(DEB_BUILD_OPTIONS)))
-	$(MAKE) check
-endif
-
-override_dh_auto_clean:
-	[ ! -f Makefile ] || $(MAKE) distclean
-	rm -rf bin
-	# Waf should be doing this; see
-	# https://bugzilla.samba.org/show_bug.cgi?id=8854
-	rm -f .lock-wscript
-	# Waf should be doing this; see
-	# https://bugzilla.samba.org/show_bug.cgi?id=8855
-	rm -rf buildtools/wafsamba/__pycache__ \
-	       third_party/waf/waflib/__pycache__/ \
-	       third_party/waf/waflib/extras/__pycache__/ \
-	       third_party/waf/waflib/Tools/__pycache__/
-
-override_dh_auto_install:
-	$(MAKE) install DESTDIR=$(DESTDIR)
-	# Waf should be doing this..
-	ar cr libtdb.a bin/default/common/*.o
-	mv libtdb.a $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)
-	mv $(DESTDIR)/usr/bin/tdbbackup \
-		$(DESTDIR)/usr/bin/tdbbackup.tdbtools
-	mv $(DESTDIR)//usr/share/man/man8/tdbbackup.8 \
-		$(DESTDIR)/usr/share/man/man8/tdbbackup.tdbtools.8
-	#HACK alert: fix up wrong markers in the common include file
-	sed -i 's/^_PUBLIC_ //' ${DESTDIR}/usr/include/tdb.h
-	touch --reference=include/tdb.h ${DESTDIR}/usr/include/tdb.h
-
-override_dh_missing:
-	dh_missing --fail-missing
-
-override_dh_makeshlibs:
-	dh_makeshlibs -Npython3-tdb -- -c4

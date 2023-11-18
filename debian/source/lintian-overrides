@@ -1,0 +1,4 @@
+# these are buildtools examples not tdb examples:
+tdb source: package-does-not-install-examples *buildtools/examples/*
+# these are binary files:
+tdb source: very-long-line-length-in-source-file * [test/*]
